@@ -1,36 +1,161 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# Next.js Self-Hosted Deployment
 
-## Getting Started
+This repository contains configuration for deploying a Next.js application using Docker and Kamal.
 
-First, run the development server:
+## Configuration Files
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+### Next.js Configuration
+`next.config.js`:
+```javascript
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+    output: 'standalone',
+};
+
+module.exports = nextConfig;
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Docker Configuration
+`Dockerfile` for multi-stage build process:
+```dockerfile
+# Builder image
+FROM node:20-alpine AS builder
+WORKDIR /app
+RUN apk update && apk upgrade
+RUN apk add curl
+COPY package.json package-lock.json ./
+RUN npm install
+COPY . .
+RUN npm run build
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+# Production image
+FROM node:20-alpine AS runner
+WORKDIR /app
+RUN addgroup -S nonroot && adduser -S nonroot -G nonroot
+USER nonroot
+COPY --from=builder --chown=nonroot:nonroot /app/.next/standalone ./
+COPY --from=builder --chown=nonroot:nonroot /app/public ./public
+COPY --from=builder --chown=nonroot:nonroot /app/.next/static ./.next/static
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+ENV HOSTNAME="0.0.0.0"
+EXPOSE 3000
+CMD ["node", "server.js"]
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Kamal Deployment Configuration
+`config/deploy.yml`:
+```yaml
+service: example
+image: fwd-next-app-w-ssr
 
-## Learn More
+env:
+  secret:
+    - EXAMPLE_SECRET
 
-To learn more about Next.js, take a look at the following resources:
+servers:
+  - 5.22.220.154
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+proxy:
+  app_port: 3000
+  ssl: true
+  host: example.com
+  healthcheck:
+    path: /
+    interval: 5
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+registry:
+  username:
+    - DOCKER_USERNAME
+  password:
+    - DOCKER_PASSWORD
 
-## Deploy on Vercel
+builder:
+  arch: amd64
+  remote: ssh://5.22.220.154
+  cache:
+    type: registry
+    options: mode=max
+    image: your-repo/example-build-cache
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+asset_path: /app/.next
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Prerequisites
+
+- Docker
+- Node.js (v20+)
+- Kamal CLI
+- SSH access to deployment server
+- Docker Hub account
+
+## Setup Instructions
+
+1. Install dependencies:
+```bash
+npm install
+```
+
+2. Set up environment variables:
+```bash
+# Create .env file with required secrets
+DOCKER_USERNAME=your_username
+DOCKER_PASSWORD=your_token
+```
+
+3. Configure SSH access
+
+
+
+## Deployment Commands
+
+### First-time setup:
+```bash
+kamal setup
+```
+
+### Regular deployment:
+```bash
+kamal deploy
+```
+
+### Check deployment status:
+```bash
+kamal lock status
+```
+
+### Release deployment lock:
+```bash
+kamal lock release
+```
+
+## Troubleshooting
+
+1. If deployment lock is stuck:
+```bash
+kamal lock release
+```
+
+2. For SSH authentication issues:
+```bash
+# Verify SSH connection
+ssh root@your_server_ip
+
+# Check SSH key permissions
+chmod 600 ~/.ssh/your_key
+chmod 644 ~/.ssh/your_key.pub
+```
+
+3. For Docker registry issues:
+```bash
+# Test Docker login
+docker login
+```
+
+## Security Notes
+
+- Never commit `.env` files or sensitive credentials
+- Use non-root user in Docker (configured in Dockerfile)
+- Keep Docker images and dependencies updated
+- Regularly update SSL certificates
+- Monitor server health checks
